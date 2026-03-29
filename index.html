@@ -1,0 +1,658 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GTF Coaches Map</title>
+
+  <!-- proj4 must be loaded before OpenLayers -->
+  <script src="https://cdn.jsdelivr.net/npm/proj4@2.9.0/dist/proj4.js"></script>
+  <!-- OpenLayers -->
+  <script src="https://cdn.jsdelivr.net/npm/ol@v10.6.1/dist/ol.js"></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@v10.6.1/ol.css" />
+  <!-- SheetJS for reading .xlsx -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      font-family: system-ui, -apple-system, sans-serif;
+      background: #dce7ed;
+    }
+
+    #map {
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(180deg, #e7eef2 0%, #dce7ed 100%);
+    }
+
+    /* ---- Hover tooltip ---- */
+    #tooltip {
+      position: absolute;
+      pointer-events: none;
+      background: #ffffff;
+      border: 1px solid rgba(29, 51, 62, 0.08);
+      border-radius: 10px;
+      box-shadow: 0 8px 24px rgba(29, 51, 62, 0.14);
+      padding: 10px 14px;
+      font-size: 13px;
+      color: #1d333e;
+      white-space: nowrap;
+      z-index: 9999;
+      display: none;
+      /* Position the tooltip above-left of the cursor by default */
+      transform: translate(-50%, calc(-100% - 12px));
+    }
+
+    #tooltip .tt-country {
+      font-weight: 700;
+      font-size: 14px;
+      margin-bottom: 3px;
+    }
+
+    #tooltip .tt-coaches {
+      font-size: 12px;
+      color: #4a6b7a;
+    }
+
+    /* ---- Legend ---- */
+    #legend {
+      position: absolute;
+      bottom: 20px;
+      right: 20px;
+      background: #ffffff;
+      border: 1px solid rgba(29, 51, 62, 0.08);
+      border-radius: 12px;
+      box-shadow: 0 6px 20px rgba(29, 51, 62, 0.12);
+      padding: 14px 16px;
+      z-index: 1000;
+      min-width: 160px;
+    }
+
+    #legend h3 {
+      font-size: 12px;
+      font-weight: 700;
+      color: #2c4a5a;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 10px;
+    }
+
+    .legend-gradient {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .legend-bar {
+      height: 12px;
+      flex: 1;
+      border-radius: 6px;
+      background: linear-gradient(to right, #c8e6c9, #1b5e20);
+    }
+
+    .legend-labels {
+      display: flex;
+      justify-content: space-between;
+      font-size: 10px;
+      color: #4a6b7a;
+      margin-top: 4px;
+    }
+
+    .legend-no-data {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 10px;
+      font-size: 11px;
+      color: #4a6b7a;
+    }
+
+    .legend-swatch {
+      width: 16px;
+      height: 16px;
+      border-radius: 3px;
+      flex-shrink: 0;
+    }
+
+    /* ---- Title card ---- */
+    #title-card {
+      position: absolute;
+      top: 16px;
+      left: 16px;
+      background: #ffffff;
+      border: 1px solid rgba(29, 51, 62, 0.08);
+      border-radius: 12px;
+      box-shadow: 0 6px 20px rgba(29, 51, 62, 0.12);
+      padding: 12px 16px;
+      z-index: 1000;
+    }
+
+    #title-card h1 {
+      font-size: 16px;
+      font-weight: 800;
+      color: #1d333e;
+      line-height: 1.2;
+    }
+
+    #title-card p {
+      font-size: 11px;
+      color: #4a6b7a;
+      margin-top: 2px;
+    }
+
+    /* ---- Disclaimer ---- */
+    .disclaimer-toggle {
+      position: fixed;
+      left: 20px;
+      bottom: 20px;
+      background: #ffffff;
+      color: #1d333e;
+      border: 1px solid rgba(29,51,62,.06);
+      border-radius: 10px;
+      padding: 8px 12px;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 12px;
+      box-shadow: 0 4px 14px rgba(29,51,62,.12);
+      z-index: 1998;
+      transition: .2s;
+    }
+    .disclaimer-toggle:hover { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(29,51,62,.16); }
+    .disclaimer-toggle.active { background: #1d333e; color: #ffffff; }
+
+    .disclaimer-panel {
+      position: fixed;
+      left: 20px;
+      bottom: 58px;
+      width: 360px;
+      max-width: calc(100vw - 40px);
+      background: #ffffff;
+      border: 1px solid rgba(29,51,62,.06);
+      border-radius: 12px;
+      padding: 12px 14px;
+      box-shadow: 0 8px 24px rgba(29,51,62,.12);
+      color: #1d333e;
+      font-size: 12px;
+      line-height: 1.45;
+      z-index: 1999;
+      display: none;
+    }
+    .disclaimer-panel.show { display: block; }
+    .disclaimer-panel a { color: #2b74b3; text-decoration: underline; }
+
+    /* ---- Mobile ---- */
+    @media (max-width: 600px) {
+      .disclaimer-toggle { left: 10px; bottom: 10px; }
+      .disclaimer-panel  { left: 10px; bottom: 50px; max-width: calc(100vw - 20px); }
+    }
+    @media (max-width: 480px) {
+      .disclaimer-toggle { left: 8px; bottom: 8px; padding: 7px 10px; font-size: 11px; }
+      .disclaimer-panel  { left: 8px; bottom: 46px; max-width: calc(100vw - 16px); font-size: 11px; }
+    }
+
+    /* ---- Mobile ---- */
+    @media (max-width: 600px) {
+      #title-card {
+        top: 10px;
+        left: 10px;
+        padding: 9px 12px;
+      }
+      #title-card h1 { font-size: 14px; }
+      #title-card p { font-size: 10px; }
+
+      #legend {
+        bottom: 10px;
+        right: 10px;
+        padding: 10px 12px;
+        min-width: 140px;
+      }
+      #legend h3 { font-size: 11px; }
+    }
+  </style>
+</head>
+<body>
+
+  <div id="map"></div>
+
+  <div id="tooltip">
+    <div class="tt-country" id="tt-country"></div>
+    <div class="tt-coaches" id="tt-coaches"></div>
+  </div>
+
+  <div id="title-card">
+    <h1>GTF Coaches Map</h1>
+    <p id="subtitle">Loading data…</p>
+  </div>
+
+  <button class="disclaimer-toggle" onclick="toggleDisclaimer()" id="disclaimerToggle">Disclaimer</button>
+  <div class="disclaimer-panel" id="disclaimerPanel">
+    Map boundaries are from the
+    <a href="https://www.imf.org/external/datamapper/NGDP_RPCH@WEO/OEMDC/ADVEC/WEOWORLD" target="_blank" rel="noopener noreferrer">IMF DataMapper</a>.
+    The boundaries do not imply any judgment on the legal status of any territory or any endorsement or acceptance of such boundaries.
+  </div>
+
+  <div id="legend">
+    <h3>Coaches per country</h3>
+    <div class="legend-gradient">
+      <div class="legend-bar"></div>
+    </div>
+    <div class="legend-labels">
+      <span>1</span>
+      <span id="legend-max">—</span>
+    </div>
+    <div class="legend-no-data">
+      <div class="legend-swatch" style="background:#ffffff; border: 1px solid rgba(29,51,62,0.15);"></div>
+      <span>No data / 0 coaches</span>
+    </div>
+  </div>
+
+  <script>
+    // ---------------------------------------------------------------
+    // 1) Robinson projection (same as reference_map)
+    // ---------------------------------------------------------------
+    const PROJ_CODE = "CUSTOM:ROBIN";
+    proj4.defs(PROJ_CODE, "+proj=robin +datum=WGS84 +units=m +no_defs");
+    ol.proj.proj4.register(proj4);
+
+    const WORLD_EXTENT = [-18000000, -8500000, 18000000, 8500000];
+    const projection = ol.proj.get(PROJ_CODE);
+    projection.setExtent(WORLD_EXTENT);
+
+    // ---------------------------------------------------------------
+    // 2) Vector source + layer for country polygons
+    // ---------------------------------------------------------------
+    const countriesSource = new ol.source.Vector();
+
+    const countriesLayer = new ol.layer.Vector({
+      source: countriesSource,
+      style: (feature) => countryStyle(feature),
+    });
+
+    // ---------------------------------------------------------------
+    // 3) Map init
+    // ---------------------------------------------------------------
+    const map = new ol.Map({
+      target: "map",
+      layers: [countriesLayer],
+      controls: ol.control.defaults.defaults({ zoom: false, rotate: false, attribution: false }),
+      view: new ol.View({
+        projection,
+        center: ol.proj.transform([10, 20], "EPSG:4326", PROJ_CODE),
+        zoom: 2,
+      }),
+    });
+
+    // ---------------------------------------------------------------
+    // 4) Color helpers — green scale
+    // ---------------------------------------------------------------
+    // coachData: { "Country Name (normalised)": coachCount }
+    let coachData = {};
+    let maxCoaches = 1;
+
+    /**
+     * Returns a green fill color for a given coach count.
+     * Uses a square-root scale so mid-range countries are distinguishable.
+     */
+    function greenFill(count) {
+      if (!count || count <= 0) return "rgba(255, 255, 255, 0.9)"; // no coaches: white
+      // Normalise to [0, 1] using sqrt scale
+      const t = Math.sqrt(count / maxCoaches);
+      // Interpolate between light green (#c8e6c9) and dark green (#1b5e20)
+      const r = Math.round(200 - t * (200 - 27));
+      const g = Math.round(230 - t * (230 - 94));
+      const b = Math.round(201 - t * (201 - 32));
+      return `rgba(${r},${g},${b},0.9)`;
+    }
+
+    function countryStyle(feature) {
+      const count = feature.get("coachCount") || 0;
+      const strokeColor = count > 0 ? "#FFFFFF" : "#D4D9DE";
+      const strokeWidth = count > 0 ? 0.9 : 0.6;
+      return new ol.style.Style({
+        fill: new ol.style.Fill({ color: greenFill(count) }),
+        stroke: new ol.style.Stroke({ color: strokeColor, width: strokeWidth }),
+      });
+    }
+
+    // ---------------------------------------------------------------
+    // 5) Tooltip logic
+    // ---------------------------------------------------------------
+    const tooltipEl  = document.getElementById("tooltip");
+    const ttCountry  = document.getElementById("tt-country");
+    const ttCoaches  = document.getElementById("tt-coaches");
+
+    let lastPixel = null;
+
+    map.on("pointermove", (evt) => {
+      if (evt.dragging) { tooltipEl.style.display = "none"; return; }
+
+      const pixel = map.getEventPixel(evt.originalEvent);
+      lastPixel = pixel;
+
+      const feature = map.forEachFeatureAtPixel(pixel, (f) => f);
+
+      const count = feature ? (feature.get("coachCount") || 0) : 0;
+
+      if (!feature || count === 0) {
+        tooltipEl.style.display = "none";
+        map.getTargetElement().style.cursor = "";
+        return;
+      }
+
+      const country = feature.get("countryLabel");
+
+      ttCountry.textContent = country;
+      ttCoaches.textContent = count === 1 ? "1 coach" : `${count} coaches`;
+
+      // Position tooltip near cursor, keeping it inside the viewport
+      const mapRect = map.getTargetElement().getBoundingClientRect();
+      const x = pixel[0];
+      const y = pixel[1];
+
+      tooltipEl.style.display = "block";
+
+      // Force reflow to get actual tooltip dimensions
+      const tw = tooltipEl.offsetWidth;
+      const th = tooltipEl.offsetHeight;
+
+      let left = x;
+      let top  = y - 12; // gap above cursor
+
+      // If too close to left edge, shift right
+      if (left - tw / 2 < 8) left = tw / 2 + 8;
+      // If too close to right edge, shift left
+      if (left + tw / 2 > mapRect.width - 8) left = mapRect.width - 8 - tw / 2;
+      // If too close to top, show below cursor instead
+      if (top - th < 8) {
+        tooltipEl.style.transform = "translate(-50%, 16px)";
+        top = y;
+      } else {
+        tooltipEl.style.transform = "translate(-50%, calc(-100% - 12px))";
+      }
+
+      tooltipEl.style.left = `${left}px`;
+      tooltipEl.style.top  = `${top}px`;
+
+      map.getTargetElement().style.cursor = "default";
+    });
+
+    map.getTargetElement().addEventListener("mouseleave", () => {
+      tooltipEl.style.display = "none";
+    });
+
+    // Touch: tap to show/hide tooltip (only for countries with coaches)
+    map.on("singleclick", (evt) => {
+      const feature = map.forEachFeatureAtPixel(evt.pixel, (f) => f);
+      const count   = feature ? (feature.get("coachCount") || 0) : 0;
+      if (!feature || count === 0) { tooltipEl.style.display = "none"; return; }
+
+      const country = feature.get("countryLabel");
+
+      ttCountry.textContent = country;
+      ttCoaches.textContent = count === 1 ? "1 coach" : `${count} coaches`;
+
+      const mapRect = map.getTargetElement().getBoundingClientRect();
+      const x = evt.pixel[0];
+      const y = evt.pixel[1];
+
+      tooltipEl.style.display = "block";
+      const tw = tooltipEl.offsetWidth;
+      const th = tooltipEl.offsetHeight;
+
+      let left = x;
+      let top  = y - 12;
+      if (left - tw / 2 < 8) left = tw / 2 + 8;
+      if (left + tw / 2 > mapRect.width - 8) left = mapRect.width - 8 - tw / 2;
+      if (top - th < 8) {
+        tooltipEl.style.transform = "translate(-50%, 16px)";
+        top = y;
+      } else {
+        tooltipEl.style.transform = "translate(-50%, calc(-100% - 12px))";
+      }
+      tooltipEl.style.left = `${left}px`;
+      tooltipEl.style.top  = `${top}px`;
+    });
+
+    // ---------------------------------------------------------------
+    // 6) Normalise country name for matching
+    // ---------------------------------------------------------------
+    function toggleDisclaimer() {
+      const panel = document.getElementById("disclaimerPanel");
+      const btn   = document.getElementById("disclaimerToggle");
+      panel.classList.toggle("show");
+      btn.classList.toggle("active");
+    }
+
+    function normalise(str) {
+      return String(str || "").trim().toLowerCase();
+    }
+
+    // ---------------------------------------------------------------
+    // 7) Load Excel + geometry + country codes in parallel
+    // ---------------------------------------------------------------
+    Promise.all([
+      fetch("./data/country_codes.json").then((r) => r.json()),
+      fetch("./data/geometry.json").then((r) => r.json()),
+      fetch("./data/GTF Coaches Data.xlsx", { cache: "no-store" }).then((r) => r.arrayBuffer()),
+    ])
+      .then(([codesJson, geomJson, xlsxBuffer]) => {
+
+        // --- Parse country_codes.json ---
+        // Structure: { countries: { ISO3: { label: "Country Name" }, ... } }
+        const countriesDict = codesJson.countries || {};
+        const isoToLabel = {};
+        for (const [iso3, obj] of Object.entries(countriesDict)) {
+          if (obj && typeof obj.label === "string" && obj.label.trim()) {
+            isoToLabel[iso3] = obj.label.trim();
+          }
+        }
+
+        // --- Parse Excel: find country and coach-count columns ---
+        const wb   = XLSX.read(xlsxBuffer, { type: "array" });
+        const ws   = wb.Sheets[wb.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(ws, { defval: "" });
+
+        // Build a normalised set of all label values for fast lookups
+        const normLabelToLabel = {};
+        for (const label of Object.values(isoToLabel)) {
+          normLabelToLabel[normalise(label)] = label;
+        }
+
+        // Manual aliases: Excel country name (normalised) → canonical label in country_codes.json.
+        // Needed when the spreadsheet uses a name different from the IMF dataset.
+        const COUNTRY_ALIASES = {
+          "congo, the democratic republic of the": "Congo, Dem. Rep. of the",
+          "kyrgyzstan":    "Kyrgyz Republic",
+          "palestine":     "West Bank and Gaza",
+          "south sudan":   "South Sudan, Republic of",
+          "turkey":        "Türkiye",
+          "united states": "United States of America",
+        };
+
+        // Detect the country column (pass 1) and coach-count column (pass 2) separately.
+        // IMPORTANT: "country" contains the substring "count", so we must NOT use the same
+        // loop for both — otherwise the country column would be assigned to coachColKey.
+        const colKeys = rows.length > 0 ? Object.keys(rows[0]) : [];
+
+        // Pass 1 — country column: must be an exact match or start with a known keyword
+        const COUNTRY_KEYS = ["country", "nation", "pais", "país"];
+        let countryColKey = colKeys.find((k) => COUNTRY_KEYS.includes(normalise(k)))
+                         ?? colKeys[0];
+
+        // Pass 2 — coach-count column: skip the country column entirely
+        const COUNT_KEYS = ["grand total", "total", "coaches", "coach count", "number of coaches"];
+        let coachColKey = colKeys
+          .filter((k) => k !== countryColKey)
+          .find((k) => COUNT_KEYS.some((c) => normalise(k).includes(c)))
+          ?? colKeys[colKeys.length - 1]; // fallback: last column
+
+        // Aggregate coach counts by normalised country name
+        const rawData = {}; // { normalisedName: count }
+        for (const row of rows) {
+          const rawCountry = String(row[countryColKey] || "").trim();
+          const rawCount   = Number(row[coachColKey]   || 0);
+          if (!rawCountry || isNaN(rawCount) || rawCount === 0) continue;
+          const normKey = normalise(rawCountry);
+          rawData[normKey] = (rawData[normKey] || 0) + rawCount;
+        }
+
+        // Resolve each Excel name to a canonical label from country_codes.json.
+        // Priority: 1) manual alias, 2) exact normalised match, 3) partial match.
+        coachData = {};
+        let totalCoaches = 0;
+        let countriesWithCoaches = 0;
+
+        for (const [normKey, count] of Object.entries(rawData)) {
+          // 1) Manual alias
+          const aliasLabel = COUNTRY_ALIASES[normKey];
+          let canonLabel = aliasLabel ? normLabelToLabel[normalise(aliasLabel)] : null;
+
+          // 2) Exact normalised match against country_codes labels
+          if (!canonLabel) canonLabel = normLabelToLabel[normKey];
+
+          // 3) Partial match as last resort
+          if (!canonLabel) {
+            for (const [nl, cl] of Object.entries(normLabelToLabel)) {
+              if (nl.includes(normKey) || normKey.includes(nl)) { canonLabel = cl; break; }
+            }
+          }
+
+          if (canonLabel) {
+            coachData[canonLabel] = (coachData[canonLabel] || 0) + count;
+            totalCoaches += count;
+            if (count > 0) countriesWithCoaches++;
+          } else {
+            console.warn("GTF Coaches Map — no country match for:", normKey);
+          }
+        }
+
+        maxCoaches = Math.max(1, ...Object.values(coachData));
+
+        // Update subtitle and legend
+        document.getElementById("subtitle").textContent =
+          `${totalCoaches} coaches across ${countriesWithCoaches} countries`;
+        document.getElementById("legend-max").textContent = maxCoaches;
+
+        // --- Build geometry (identical logic to reference_map) ---
+        // geometry.json structure:
+        //   items:  { ISO3: { m: [massId, ...], b: [...] }, ... }
+        //   masses: { "massId": { poly: [[x, y], ...] }, ... }
+        // Coordinates are normalised (x ≈ 0..200, y ≈ 0..110), Y grows downward.
+        const items  = geomJson.items  || {};
+        const masses = geomJson.masses || {};
+
+        // Compute bounding box of all mass coordinates
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        for (const m of Object.values(masses)) {
+          const poly = m?.poly;
+          if (!Array.isArray(poly)) continue;
+          for (const pt of poly) {
+            if (pt[0] < minX) minX = pt[0];
+            if (pt[0] > maxX) maxX = pt[0];
+            if (pt[1] < minY) minY = pt[1];
+            if (pt[1] > maxY) maxY = pt[1];
+          }
+        }
+
+        // Affine mapping: geometry coords → Robinson metres (WORLD_EXTENT)
+        const [wx0, wy0, wx1, wy1] = WORLD_EXTENT;
+        const scaleX = (wx1 - wx0) / (maxX - minX);
+        const scaleY = (wy1 - wy0) / (maxY - minY);
+
+        /** Converts a geometry.json point [x,y] to Robinson projection coords [X,Y]. */
+        function geomToRobin([x, y]) {
+          const X = wx0 + (x - minX) * scaleX;
+          const Y = wy1 - (y - minY) * scaleY; // flip Y: geometry has Y growing downward
+          return [X, Y];
+        }
+
+        /** Ensures the ring is closed (first point === last point). */
+        function closeRing(ring) {
+          if (!ring.length) return ring;
+          const [x0, y0] = ring[0];
+          const [xN, yN] = ring[ring.length - 1];
+          if (x0 !== xN || y0 !== yN) ring.push([x0, y0]);
+          return ring;
+        }
+
+        // Build OpenLayers features
+        const features = [];
+
+        for (const [iso3, entry] of Object.entries(items)) {
+          const label = isoToLabel[iso3] || iso3;
+          const mList = Array.isArray(entry?.m) ? entry.m : [];
+          if (!mList.length) continue;
+
+          // Each mass becomes a polygon ring; together they form a MultiPolygon
+          const multiPolygon = [];
+          for (const massId of mList) {
+            const mass = masses[String(massId)];
+            const poly = mass?.poly;
+            if (!Array.isArray(poly) || poly.length < 3) continue;
+
+            const ring = poly.map(geomToRobin);
+            closeRing(ring);
+            multiPolygon.push([ring]);
+          }
+          if (!multiPolygon.length) continue;
+
+          const geom    = new ol.geom.MultiPolygon(multiPolygon); // already in PROJ_CODE
+          const feature = new ol.Feature({ geometry: geom });
+
+          feature.set("countryLabel", label);
+          feature.set("coachCount", coachData[label] || 0);
+
+          features.push(feature);
+        }
+
+        countriesSource.addFeatures(features);
+
+        // Fit the view to the actual country extent
+        const extent = countriesSource.getExtent();
+        if (extent && !ol.extent.isEmpty(extent)) {
+          map.getView().fit(extent, {
+            size: map.getSize(),
+            padding: [20, 20, 20, 20],
+            maxZoom: 3.8,
+          });
+
+          // Capture the fitted state to build the permanent view
+          const fittedCenter     = map.getView().getCenter();
+          const fittedZoom       = map.getView().getZoom();
+          const fittedResolution = map.getView().getResolution();
+          const [mapW, mapH]     = map.getSize();
+
+          // Use the viewport at the fitted zoom as the pan boundary.
+          // OL's native extent constraint then blocks any drag/touch that would
+          // push the map off-screen, with zero JS overhead per frame.
+          const panExtent = [
+            fittedCenter[0] - mapW * fittedResolution / 2,
+            fittedCenter[1] - mapH * fittedResolution / 2,
+            fittedCenter[0] + mapW * fittedResolution / 2,
+            fittedCenter[1] + mapH * fittedResolution / 2,
+          ];
+
+          map.setView(new ol.View({
+            projection,
+            center: fittedCenter,
+            zoom: fittedZoom,
+            minZoom: fittedZoom,
+            // ── ZOOM-IN LIMIT ── Change this value to control how far in the user can zoom.
+            // Lower = less zoom, higher = more zoom. Suggested range: 4–10.
+            maxZoom: 6,
+            extent: panExtent,
+          }));
+        }
+      })
+      .catch((err) => {
+        console.error("Failed to load map data:", err);
+        document.getElementById("subtitle").textContent = "Error loading data";
+      });
+  </script>
+</body>
+</html>
