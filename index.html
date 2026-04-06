@@ -276,15 +276,31 @@
     // ---------------------------------------------------------------
     // 3) Map init
     // ---------------------------------------------------------------
+    function responsiveViewParams() {
+      if (window.innerWidth <= 768) {
+        return { centerLonLat: [10, 50], zoom: 2.7, padding: [20, 20, 20, 20] };
+      }
+      return { centerLonLat: [0, 5], zoom: 2.9, padding: [20, 20, 20, 20] };
+    }
+
+    const { centerLonLat, zoom: initialZoom, padding } = responsiveViewParams();
+    const initialCenter = ol.proj.transform(centerLonLat, "EPSG:4326", PROJ_CODE);
+
     const map = new ol.Map({
       target: "map",
       layers: [countriesLayer],
       controls: ol.control.defaults.defaults({ zoom: false, rotate: false, attribution: false }),
       view: new ol.View({
         projection,
-        center: ol.proj.transform([10, 20], "EPSG:4326", PROJ_CODE),
-        zoom: 2,
+        center: initialCenter,
+        zoom: initialZoom,
       }),
+    });
+
+    map.getView().fit(WORLD_EXTENT, {
+      size: map.getSize(),
+      padding,
+      maxZoom: 3.2,
     });
 
     // ---------------------------------------------------------------
@@ -614,10 +630,11 @@
 
         // Fit the view to the actual country extent
         const extent = countriesSource.getExtent();
-        if (extent && !ol.extent.isEmpty(extent)) {
-          map.getView().fit(extent, {
+        const fitExtent = (extent && !ol.extent.isEmpty(extent)) ? extent : WORLD_EXTENT;
+        if (fitExtent) {
+          map.getView().fit(fitExtent, {
             size: map.getSize(),
-            padding: [20, 20, 20, 20],
+            padding,
             maxZoom: 3.8,
           });
 
