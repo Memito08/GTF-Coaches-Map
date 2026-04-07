@@ -654,16 +654,30 @@
             fittedCenter[1] + mapH * fittedResolution / 2,
           ];
 
+          const isMobile = window.innerWidth <= 768;
+          const mobileExtraZoom = 2.0;
+
           map.setView(new ol.View({
             projection,
             center: fittedCenter,
             zoom: fittedZoom,
-            minZoom: fittedZoom,
+            minZoom: isMobile ? fittedZoom + mobileExtraZoom : fittedZoom,
             // ── ZOOM-IN LIMIT ── Change this value to control how far in the user can zoom.
             // Lower = less zoom, higher = more zoom. Suggested range: 4–10.
             maxZoom: 6,
             extent: panExtent,
           }));
+
+          // Mobile: start at the mobile zoom level and disable rotation
+          if (isMobile) {
+            map.getView().setCenter(fittedCenter);
+            map.getView().setZoom(fittedZoom + mobileExtraZoom);
+            map.getInteractions().forEach(interaction => {
+              if (interaction instanceof ol.interaction.PinchRotate) {
+                map.removeInteraction(interaction);
+              }
+            });
+          }
         }
       })
       .catch((err) => {
