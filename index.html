@@ -5,8 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>GTF Coaches Map</title>
 
-  <!-- proj4 must be loaded before OpenLayers -->
-  <script src="https://cdn.jsdelivr.net/npm/proj4@2.9.0/dist/proj4.js"></script>
   <!-- OpenLayers -->
   <script src="https://cdn.jsdelivr.net/npm/ol@v10.6.1/dist/ol.js"></script>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@v10.6.1/ol.css" />
@@ -232,8 +230,7 @@
   <button class="disclaimer-toggle" onclick="toggleDisclaimer()" id="disclaimerToggle">Disclaimer</button>
   <div class="disclaimer-panel" id="disclaimerPanel">
     Map boundaries are from the
-    <a href="https://www.imf.org/external/datamapper/NGDP_RPCH@WEO/OEMDC/ADVEC/WEOWORLD" target="_blank" rel="noopener noreferrer">IMF DataMapper</a>.
-    The boundaries do not imply any judgment on the legal status of any territory or any endorsement or acceptance of such boundaries.
+    <a href="https://www.imf.org/external/datamapper/NGDP_RPCH@WEO/OEMDC/ADVEC/WEOWORLD" target="_blank" rel="noopener noreferrer">IMF</a>, a specialized agency of the United Nations. Global Talent Fund accepts no liability for omissions or errors in the data. The boundaries, colors, denominations, and any other information shown on the maps do not imply, on the part of GTF, any judgment on the legal status of any territory or any endorsement or acceptance of such boundaries.
   </div>
 
   <div id="legend">
@@ -253,13 +250,39 @@
 
   <script>
     // ---------------------------------------------------------------
-    // 1) Robinson projection (same as reference_map)
+    // 1) Projection
     // ---------------------------------------------------------------
-    const PROJ_CODE = "CUSTOM:ROBIN";
-    proj4.defs(PROJ_CODE, "+proj=robin +datum=WGS84 +units=m +no_defs");
-    ol.proj.proj4.register(proj4);
+    const PROJ_CODE = "CUSTOM:WINTRI";
 
-    const WORLD_EXTENT = [-18000000, -8500000, 18000000, 8500000];
+    (function registerWinkelTripel() {
+      const R = 6371000;
+      const phi1 = Math.acos(2 / Math.PI);
+      const cosPhi1 = Math.cos(phi1);
+
+      function forward([lon, lat]) {
+        const lam = lon * Math.PI / 180;
+        const phi = lat * Math.PI / 180;
+        const alpha = Math.acos(Math.max(-1, Math.min(1, Math.cos(phi) * Math.cos(lam / 2))));
+        const sinc = alpha < 1e-10 ? 1 : Math.sin(alpha) / alpha;
+
+        return [
+          R * (lam * cosPhi1 + 2 * Math.cos(phi) * Math.sin(lam / 2) / sinc) / 2,
+          R * (phi + Math.sin(phi) / sinc) / 2,
+        ];
+      }
+
+      function inverse([x, y]) {
+        const phi = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, (2 * y / R)));
+        const lam = Math.max(-Math.PI, Math.min(Math.PI, (2 * x / R) / (cosPhi1 + Math.cos(phi))));
+        return [lam * 180 / Math.PI, phi * 180 / Math.PI];
+      }
+
+      const proj = new ol.proj.Projection({ code: PROJ_CODE, units: "m", global: false });
+      ol.proj.addProjection(proj);
+      ol.proj.addCoordinateTransforms("EPSG:4326", PROJ_CODE, forward, inverse);
+    })();
+
+    const WORLD_EXTENT = [-16380000, -10008000, 16380000, 10008000];
     const projection = ol.proj.get(PROJ_CODE);
     projection.setExtent(WORLD_EXTENT);
 
@@ -554,37 +577,23 @@
           `${totalCoaches} coaches across ${countriesWithCoaches} countries`;
         document.getElementById("legend-max").textContent = maxCoaches;
 
-        // --- Build geometry (identical logic to reference_map) ---
-        // geometry.json structure:
-        //   items:  { ISO3: { m: [massId, ...], b: [...] }, ... }
-        //   masses: { "massId": { poly: [[x, y], ...] }, ... }
-        // Coordinates are normalised (x ≈ 0..200, y ≈ 0..110), Y grows downward.
+        // --- Build geometry ---
         const items  = geomJson.items  || {};
         const masses = geomJson.masses || {};
 
-        // Compute bounding box of all mass coordinates
-        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-        for (const m of Object.values(masses)) {
-          const poly = m?.poly;
-          if (!Array.isArray(poly)) continue;
-          for (const pt of poly) {
-            if (pt[0] < minX) minX = pt[0];
-            if (pt[0] > maxX) maxX = pt[0];
-            if (pt[1] < minY) minY = pt[1];
-            if (pt[1] > maxY) maxY = pt[1];
-          }
-        }
-
-        // Affine mapping: geometry coords → Robinson metres (WORLD_EXTENT)
-        const [wx0, wy0, wx1, wy1] = WORLD_EXTENT;
-        const scaleX = (wx1 - wx0) / (maxX - minX);
-        const scaleY = (wy1 - wy0) / (maxY - minY);
-
-        /** Converts a geometry.json point [x,y] to Robinson projection coords [X,Y]. */
-        function geomToRobin([x, y]) {
-          const X = wx0 + (x - minX) * scaleX;
-          const Y = wy1 - (y - minY) * scaleY; // flip Y: geometry has Y growing downward
-          return [X, Y];
+        const BBOX_LEFT = -168.965424;
+        const BBOX_RIGHT = 190.244671;
+        const BBOX_LON_SPAN = BBOX_RIGHT - BBOX_LEFT;
+        const IMG_W = 200;
+        const IMG_H = 200 / 1.8235208601308;
+        const TAN_TOP = Math.tan(83.567272 * Math.PI / 360);
+        const TAN_BOTTOM = Math.tan(-55.899163 * Math.PI / 360);
+        const TAN_SPAN = TAN_TOP - TAN_BOTTOM;
+        function geomToProj([x, y]) {
+          const lon = (x / IMG_W) * BBOX_LON_SPAN + BBOX_LEFT;
+          const tanLat = TAN_TOP - (y / IMG_H) * TAN_SPAN;
+          const lat = Math.atan(tanLat) * (360 / Math.PI);
+          return ol.proj.transform([lon, lat], "EPSG:4326", PROJ_CODE);
         }
 
         /** Ensures the ring is closed (first point === last point). */
@@ -611,7 +620,7 @@
             const poly = mass?.poly;
             if (!Array.isArray(poly) || poly.length < 3) continue;
 
-            const ring = poly.map(geomToRobin);
+            const ring = poly.map(geomToProj);
             closeRing(ring);
             multiPolygon.push([ring]);
           }
@@ -656,6 +665,11 @@
 
           const isMobile = window.innerWidth <= 768;
           const mobileExtraZoom = 2.0;
+
+          if (isMobile) {
+            panExtent[1] = Math.max(panExtent[1], WORLD_EXTENT[1]);
+            panExtent[3] = Math.min(panExtent[3], WORLD_EXTENT[3]);
+          }
 
           map.setView(new ol.View({
             projection,
